@@ -55,7 +55,7 @@ class PointWriter(container: CosmosAsyncContainer,
     new ThreadPoolExecutor.CallerRunsPolicy()
   )
 
-  private val capturedFailure = new AtomicReference[Throwable]()
+  private val capturedFailure = new AtomicReference[(Throwable, Option[ObjectNode])]()
   private val pendingPointWrites = new TrieMap[Future[Unit], Boolean]()
   private val closed = new AtomicBoolean(false)
 
@@ -120,9 +120,10 @@ class PointWriter(container: CosmosAsyncContainer,
 
   private[this] def throwIfCapturedExceptionExists(): Unit = {
     val errorSnapshot = capturedFailure.get()
-    if (errorSnapshot != null) {
-      log.logError(s"throw captured error ${errorSnapshot.getMessage} $getThreadInfo")
-      throw errorSnapshot
+    if (errorSnapshot != null && errorSnapshot._2.get != null) {
+      // log.logError(s"throw captured error ${errorSnapshot.getMessage} $getThreadInfo")
+      println(s"Failed to write change document with id: " + errorSnapshot._2.get.get("id") + " on document: " + errorSnapshot._2.get.get("documentKey") + s" with error: ${errorSnapshot._1.getMessage}")
+      // throw errorSnapshot
     }
   }
 
@@ -142,7 +143,7 @@ class PointWriter(container: CosmosAsyncContainer,
           pendingPointWrites.remove(promise.future)
           log.logItemWriteCompletion(createOperation)
         case Failure(e) =>
-          captureIfFirstFailure(e)
+          captureIfFirstFailure(e, Some(objectNode))
           promise.failure(e)
           log.logItemWriteFailure(createOperation, e)
           pendingPointWrites.remove(promise.future)
@@ -164,7 +165,7 @@ class PointWriter(container: CosmosAsyncContainer,
           pendingPointWrites.remove(promise.future)
           log.logItemWriteCompletion(upsertOperation)
         case Failure(e) =>
-          captureIfFirstFailure(e)
+          captureIfFirstFailure(e, Some(objectNode))
           promise.failure(e)
           pendingPointWrites.remove(promise.future)
           log.logItemWriteFailure(upsertOperation, e)
@@ -188,7 +189,7 @@ class PointWriter(container: CosmosAsyncContainer,
           pendingPointWrites.remove(promise.future)
           log.logItemWriteCompletion(deleteOperation)
         case Failure(e) =>
-          captureIfFirstFailure(e)
+          captureIfFirstFailure(e, Some(objectNode))
           promise.failure(e)
           pendingPointWrites.remove(promise.future)
           log.logItemWriteFailure(deleteOperation, e)
@@ -210,7 +211,7 @@ class PointWriter(container: CosmosAsyncContainer,
          pendingPointWrites.remove(promise.future)
          log.logItemWriteCompletion(patchOperation)
        case Failure(e) =>
-         captureIfFirstFailure(e)
+         captureIfFirstFailure(e, Some(objectNode))
          promise.failure(e)
          pendingPointWrites.remove(promise.future)
          log.logItemWriteFailure(patchOperation, e)
@@ -237,7 +238,7 @@ class PointWriter(container: CosmosAsyncContainer,
           pendingPointWrites.remove(promise.future)
           log.logItemWriteCompletion(replaceOperation)
         case Failure(e) =>
-          captureIfFirstFailure(e)
+          captureIfFirstFailure(e, Some(objectNode))
           promise.failure(e)
           pendingPointWrites.remove(promise.future)
           log.logItemWriteFailure(replaceOperation, e)
@@ -301,7 +302,7 @@ class PointWriter(container: CosmosAsyncContainer,
     log.logItemWriteFailure(upsertOperation, exceptionOpt.get)
     assert(exceptionOpt.isDefined)
     exceptionOpt.get.printStackTrace()
-    throw exceptionOpt.get
+    // throw exceptionOpt.get
   }
   // scalastyle:on return
 
@@ -498,7 +499,7 @@ class PointWriter(container: CosmosAsyncContainer,
     // signal an exception that will be thrown for any pending work/flushAndClose if no other exception has
     // been registered
     captureIfFirstFailure(
-      new IllegalStateException(s"The Spark task was aborted, Context: ${taskDiagnosticsContext.toString}"))
+      new IllegalStateException(s"The Spark task was aborted, Context: ${taskDiagnosticsContext.toString}"), None)
 
     closed.set(true)
 
@@ -510,10 +511,10 @@ class PointWriter(container: CosmosAsyncContainer,
     }
   }
 
-  private def captureIfFirstFailure(throwable: Throwable): Unit = {
+  private def captureIfFirstFailure(throwable: Throwable, o : Option[ObjectNode]): Unit = {
     log.logError(s"capture failure, Context: {${taskDiagnosticsContext.toString}}", throwable)
     //scalastyle:off null
-    capturedFailure.compareAndSet(null, throwable)
+    capturedFailure.compareAndSet(null, (throwable, o))
     //scalastyle:on null
   }
 }
